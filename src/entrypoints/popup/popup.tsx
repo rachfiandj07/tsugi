@@ -625,56 +625,53 @@ function HomeView({ settings, trackedItems, currentKey, onSearch, onSettings, on
     const progressLabel = `${item.type === 'anime' ? 'EP' : 'CH'} ${item.lastProgress}`;
 
     const statusInfo = STATUS_CONFIG[item.status] || { label: item.status, color: 'var(--text-muted)' };
-    const mediaCondition = item.publishingStatus?.toLowerCase().replace(/_/g, ' ');
 
     return (
       <div key={item.platformKey} className={`track-card ${isLive ? 'active' : ''}`}>
-        <div className="track-info" style={{ flex: 1, minWidth: 0, paddingRight: 8 }}>
-          <div style={{ display: 'flex', alignItems: 'center', gap: 8, minWidth: 0 }}>
-            <div className="track-title" style={{ flex: 1 }}>{item.platformTitle}</div>
-            <div style={{ flexShrink: 0 }}>
-              <Badge label={statusInfo.label} color={statusInfo.color} />
-            </div>
-            <div className="track-meta">
-              <Badge label={getPlatformLabel(item.platform)} color="var(--text-muted)" />
-              <span style={{ color: 'var(--text-muted)', fontSize: 10 }}>•</span>
-              <span style={{ color: 'var(--text-primary)', fontSize: 10, fontWeight: 700 }}>
-                {progressLabel}
-                {latestPending && latestPending > item.lastProgress && (
-                  <span className="unsynced-info" style={{ color: 'var(--accent)', marginLeft: 6, opacity: 0.9 }}>
-                    → {item.type === 'anime' ? 'Ep.' : 'Ch.'}{latestPending} <span style={{ fontSize: 9, fontStyle: 'italic', fontWeight: 500 }}>(Unsynced)</span>
-                  </span>
-                )}
-              </span>
-              {mediaCondition && (
-                <>
-                  <span style={{ color: 'var(--text-muted)', fontSize: 10 }}>•</span>
-                  <span style={{ color: 'var(--text-muted)', fontSize: 10, textTransform: 'capitalize' }}>{mediaCondition}</span>
-                </>
+        {/* Left: title + meta stacked */}
+        <div className="track-info">
+          {/* Row 1: title + status badge */}
+          <div style={{ display: 'flex', alignItems: 'center', gap: 6, minWidth: 0 }}>
+            <div className="track-title">{item.platformTitle}</div>
+            <Badge label={statusInfo.label} color={statusInfo.color} />
+          </div>
+          {/* Row 2: platform label · episode */}
+          <div className="track-meta">
+            <span className="track-meta-label">{getPlatformLabel(item.platform)}</span>
+            <span className="track-meta-dot">•</span>
+            <span className="track-meta-ep">
+              {progressLabel}
+              {latestPending && latestPending > item.lastProgress && (
+                <span style={{ color: 'var(--accent)', marginLeft: 5 }}>
+                  → {item.type === 'anime' ? 'Ep.' : 'Ch.'}{latestPending}
+                  <span style={{ fontSize: 9, fontStyle: 'italic', fontWeight: 500, marginLeft: 3 }}>(Unsynced)</span>
+                </span>
               )}
-            </div>
+            </span>
           </div>
-          <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
-            {!isUnlinked && latestPending && (
-              <button
-                onClick={async (e) => {
-                  e.stopPropagation();
-                  await msg({ type: 'SYNC_PROGRESS', payload: { platformKey: item.platformKey } });
-                  onUpdate();
-                }}
-                className="btn-icon"
-                title="Sync Now"
-                style={{ color: 'var(--accent)', borderColor: 'var(--accent-soft)', background: 'var(--accent-soft)' }}
-              >
-                ↑
-              </button>
-            )}
-            {isUnlinked ? (
-              <button onClick={() => onSearch(item.platformKey, item.platformTitle, item.type)} className="btn-accent" style={{ padding: '3px 8px', fontSize: 10 }}>Link</button>
-            ) : (
-              <button onClick={() => onMigrate(item)} className="btn-icon">⇄</button>
-            )}
-          </div>
+        </div>
+
+        {/* Right: action buttons */}
+        <div style={{ display: 'flex', alignItems: 'center', gap: 4, flexShrink: 0 }}>
+          {!isUnlinked && latestPending && (
+            <button
+              onClick={async (e) => {
+                e.stopPropagation();
+                await msg({ type: 'SYNC_PROGRESS', payload: { platformKey: item.platformKey } });
+                onUpdate();
+              }}
+              className="btn-icon"
+              title="Sync Now"
+              style={{ color: 'var(--accent)', borderColor: 'var(--accent-soft)', background: 'var(--accent-soft)' }}
+            >
+              ↑
+            </button>
+          )}
+          {isUnlinked ? (
+            <button onClick={() => onSearch(item.platformKey, item.platformTitle, item.type)} className="btn-accent" style={{ padding: '3px 8px', fontSize: 10 }}>Link</button>
+          ) : (
+            <button onClick={() => onMigrate(item)} className="btn-icon" title="Migrate">⇄</button>
+          )}
         </div>
       </div>
     );
@@ -686,7 +683,7 @@ function HomeView({ settings, trackedItems, currentKey, onSearch, onSettings, on
         <div className="logo-container">
           <img src="/app-icon.svg" alt="" style={{ width: 28, height: 28 }} />
           <div>
-            <h1 className="logo-text" style={{ margin: 0 }}>Tsugi</h1>
+            <h1 className="logo-text" style={{ margin: '4px 0' }}>Tsugi</h1>
             <div className="status-text">{hasAuth ? 'Trackers Active' : 'No Trackers Connected'}</div>
           </div>
         </div>
