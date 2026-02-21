@@ -72,10 +72,10 @@ describe('ALL_DETECTORS registry', () => {
         expect(matched?.platform).toBe('generic_manga');
     });
 
-    it('routes weebcentral.com to the generic_manga detector', () => {
+    it('routes weebcentral.com to the weebcentral detector', () => {
         const url = 'https://weebcentral.com/chapters/01J7KQZXYZ/1';
         const matched = ALL_DETECTORS.find(d => d.matches.some(re => re.test(url)));
-        expect(matched?.platform).toBe('generic_manga');
+        expect(matched?.platform).toBe('weebcentral');
     });
 
     it('returns null for an unrecognised URL', () => {

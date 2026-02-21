@@ -42,3 +42,31 @@ export const tcbScansDetector: PlatformDetector = {
         return make('tcbscans', title, progress, 'manga');
     },
 };
+
+export const weebCentralDetector: PlatformDetector = {
+    platform: 'weebcentral',
+    matches: [/weebcentral\.com\/chapters\//],
+    detect() {
+        // WeebCentral has a top navigation bar. Back to Series button contains real title.
+        const seriesLinks = Array.from(document.querySelectorAll('a[href*="/series/"]')) as HTMLAnchorElement[];
+        const seriesBtn = seriesLinks.find(a => a.href.match(/\/series\/[0-9A-Z]{10,}/i));
+
+        let title = cleanTitle(seriesBtn?.textContent?.trim() ?? '');
+
+        // If seriesBtn fails, fallback
+        if (!title || title.match(/^Chapter\s*\d+/i) || title.toLowerCase() === 'random') {
+            const ogTitle = document.querySelector('meta[property="og:title"]')?.getAttribute('content') ?? '';
+            title = cleanTitle(ogTitle.split(' | ')[0] ?? '');
+
+            if (!title || title.match(/^Chapter\s*\d+/i)) {
+                title = cleanTitle(document.title.split(/Chapter\s*\d+/i)[0].trim());
+            }
+        }
+
+        const progressMatch = document.title?.match(/Chapter\s*([\d.]+)/i);
+        const progress = parseFloat(progressMatch?.[1] ?? '0');
+
+        if (!isReadingManga() || !title || progress <= 0) return null;
+        return make('weebcentral', title, progress, 'manga');
+    },
+};

@@ -92,13 +92,16 @@ function Header({ title, onBack }: { title: string; onBack: () => void }) {
   );
 }
 
-function PendingUpdatesBanner({ items, onSync }: { items: TrackedItem[], onSync: () => Promise<void> }) {
-  const [dismissed, setDismissed] = useState(false);
-  if (items.length === 0 || dismissed) return null;
+function PendingUpdatesBanner({ items, onSync, onDismiss }: { items: TrackedItem[], onSync: () => Promise<void>, onDismiss: (keys: string[]) => Promise<void> }) {
+  const [loading, setLoading] = useState<'sync' | 'dismiss' | null>(null);
+
+  if (items.length === 0) return null;
+  const keys = items.map(i => i.platformKey);
+
   return (
     <div className="error-banner" style={{ background: 'var(--accent-soft)', borderColor: 'var(--accent)', color: 'var(--text-primary)', marginBottom: 20, marginTop: 8, padding: '10px 14px' }}>
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 12 }}>
-        <div style={{ flex: 1 }}>
+        <div style={{ flex: 1, minWidth: 0 }}>
           <div style={{ fontWeight: 800, fontSize: 11, marginBottom: 4, letterSpacing: '0.05em', color: 'var(--accent)' }}>⚠ PENDING UPDATES</div>
           <div style={{ fontSize: 11, opacity: 0.9, lineHeight: 1.4 }}>
             <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
@@ -113,16 +116,34 @@ function PendingUpdatesBanner({ items, onSync }: { items: TrackedItem[], onSync:
         </div>
         <div style={{ display: 'flex', gap: 6, flexShrink: 0 }}>
           <button
-            onClick={() => setDismissed(true)}
+            onClick={async (e) => {
+              e.preventDefault();
+              setLoading('dismiss');
+              try {
+                await onDismiss(keys);
+              } finally {
+                setLoading(null);
+              }
+            }}
+            disabled={loading !== null}
             className="btn-icon"
             title="Dismiss"
             style={{ fontSize: 11, padding: '4px 8px' }}
           >✕</button>
           <button
-            onClick={async () => { await onSync(); setDismissed(true); }}
+            onClick={async (e) => {
+              e.preventDefault();
+              setLoading('sync');
+              try {
+                await onSync();
+              } finally {
+                setLoading(null);
+              }
+            }}
+            disabled={loading !== null}
             className="btn-accent"
             style={{ padding: '6px 12px', fontSize: 11, whiteSpace: 'nowrap' }}
-          >Sync All</button>
+          >{loading === 'sync' ? '...' : 'Sync All'}</button>
         </div>
       </div>
     </div>
@@ -553,10 +574,10 @@ function SettingsView({ settings, onBack, onOpenLogin, onUpdate }: {
 
 // ─── Home View ────────────────────────────────────────────────────────────────
 
-function HomeView({ settings, trackedItems, currentKey, onSearch, onSettings, onMigrate, onUpdate }: {
+function HomeView({ settings, trackedItems, currentKeys, onSearch, onSettings, onMigrate, onUpdate }: {
   settings: AppSettings;
   trackedItems: TrackedItem[];
-  currentKey: string | null;
+  currentKeys: string[];
   onSearch: (platformKey?: string, title?: string, mediaType?: MediaType) => void;
   onSettings: () => void;
   onMigrate: (item: TrackedItem) => void;
@@ -591,13 +612,13 @@ function HomeView({ settings, trackedItems, currentKey, onSearch, onSettings, on
   // Reset limit when query changes
   useEffect(() => setDisplayLimit(20), [localQuery]);
 
-  const currentlyViewing = filteredItems.find(item => item.platformKey === currentKey);
+  const currentlyViewingItems = filteredItems.filter(item => currentKeys.includes(item.platformKey));
 
-  const animeHistoryOfficial = filteredItems.filter(item => item.type === 'anime' && isOfficial(item.platform) && item !== currentlyViewing && Object.keys(item.trackerIds).length > 0);
-  const animeHistoryCommunity = filteredItems.filter(item => item.type === 'anime' && !isOfficial(item.platform) && item !== currentlyViewing && Object.keys(item.trackerIds).length > 0);
+  const animeHistoryOfficial = filteredItems.filter(item => item.type === 'anime' && isOfficial(item.platform) && !currentKeys.includes(item.platformKey) && Object.keys(item.trackerIds).length > 0);
+  const animeHistoryCommunity = filteredItems.filter(item => item.type === 'anime' && !isOfficial(item.platform) && !currentKeys.includes(item.platformKey) && Object.keys(item.trackerIds).length > 0);
 
-  const mangaHistoryOfficial = filteredItems.filter(item => item.type !== 'anime' && isOfficial(item.platform) && item !== currentlyViewing && Object.keys(item.trackerIds).length > 0);
-  const mangaHistoryCommunity = filteredItems.filter(item => item.type !== 'anime' && !isOfficial(item.platform) && item !== currentlyViewing && Object.keys(item.trackerIds).length > 0);
+  const mangaHistoryOfficial = filteredItems.filter(item => item.type !== 'anime' && isOfficial(item.platform) && !currentKeys.includes(item.platformKey) && Object.keys(item.trackerIds).length > 0);
+  const mangaHistoryCommunity = filteredItems.filter(item => item.type !== 'anime' && !isOfficial(item.platform) && !currentKeys.includes(item.platformKey) && Object.keys(item.trackerIds).length > 0);
 
   // Helper to cap rendered items
   let renderedCount = 0;
@@ -712,8 +733,12 @@ function HomeView({ settings, trackedItems, currentKey, onSearch, onSettings, on
         {settings.batchSyncPending && (
           <PendingUpdatesBanner
             items={filteredItems.filter(i => (i.pendingProgress?.length ?? 0) > 0)}
+            onDismiss={async (keys) => {
+              await msg({ type: 'DISMISS_PENDING', payload: { platformKeys: keys } });
+              onUpdate();
+            }}
             onSync={async () => {
-              await Promise.all(
+              await Promise.allSettled(
                 filteredItems
                   .filter(i => (i.pendingProgress?.length ?? 0) > 0)
                   .map(i => msg({ type: 'SYNC_PROGRESS', payload: { platformKey: i.platformKey } }))
@@ -733,9 +758,9 @@ function HomeView({ settings, trackedItems, currentKey, onSearch, onSettings, on
           />
         </div>
 
-        {currentlyViewing && (
-          <Section title="CURRENTLY VIEWING" isLive>
-            {renderItem(currentlyViewing, true)}
+        {currentlyViewingItems.length > 0 && (
+          <Section title={`CURRENTLY ${currentlyViewingItems.some(i => i.type === 'anime') ? 'WATCHING' : 'READING'}`} isLive>
+            {currentlyViewingItems.map(item => renderItem(item, true))}
           </Section>
         )}
 
@@ -770,17 +795,17 @@ function App() {
   const [trackedItems, setTrackedItems] = useState<TrackedItem[]>([]);
   const [migrateTarget, setMigrateTarget] = useState<TrackedItem | null>(null);
   const [searchCtx, setSearchCtx] = useState<{ platformKey: string | null, query: string | null, mediaType?: MediaType } | null>(null);
-  const [currentlyViewingKey, setCurrentlyViewingKey] = useState<string | null>(null);
+  const [currentlyViewingKeys, setCurrentlyViewingKeys] = useState<string[]>([]);
 
   const loadAll = useCallback(async () => {
     try {
       const [s, items] = await Promise.all([
         msg<AppSettings>({ type: 'GET_SETTINGS' }),
-        msg<{ active: TrackedItem[]; currentlyViewingKey: string | null }>({ type: 'GET_TRACKED_ITEMS' }),
+        msg<{ active: TrackedItem[]; currentlyViewingKeys?: string[] }>({ type: 'GET_TRACKED_ITEMS' }),
       ]);
       setSettings(s);
       setTrackedItems(items.active);
-      setCurrentlyViewingKey(items.currentlyViewingKey);
+      setCurrentlyViewingKeys(items.currentlyViewingKeys || []);
     } catch (e) {
       console.error(e);
     }
@@ -798,7 +823,7 @@ function App() {
     <HomeView
       settings={settings}
       trackedItems={trackedItems}
-      currentKey={currentlyViewingKey}
+      currentKeys={currentlyViewingKeys}
       onSearch={(key, title, type) => { setSearchCtx({ platformKey: key || null, query: title || null, mediaType: type }); setView('search'); }}
       onSettings={() => setView('settings')}
       onMigrate={(item) => { setMigrateTarget(item); setView('migrate'); }}

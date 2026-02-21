@@ -152,20 +152,9 @@
 | 2 | WEBTOON | [webtoons.com](https://www.webtoons.com) | 🌐 Global |
 | 3 | MANGA Plus by Shueisha | [mangaplus.shueisha.co.jp](https://mangaplus.shueisha.co.jp) | 🌐 Global |
 
-### Community — Dedicated Detectors
-
-| # | Platform | URL |
-|---|----------|-----|
-| 1 | MangaBat | [mangabat.com](https://mangabat.com) |
-| 2 | Mangakakalot / MangaNato | [mangakakalot.com](https://mangakakalot.com) / [chapmanganato.to](https://chapmanganato.to) |
-| 3 | TCB Scans | [tcbscans.com](https://tcbscans.com) |
-
 ### Community — Generic Detector (90+ Sources)
 
 Tsugi includes a powerful generic manga detector that works out-of-the-box with sites using popular reader engines (Madara, MangaStream, etc.). Below is a selection of the **90+ supported sources**:
-
-<details>
-<summary><strong>Click to expand full list</strong></summary>
 
 | # | Platform | URL | Region |
 |---|----------|-----|--------|
@@ -274,8 +263,6 @@ Tsugi includes a powerful generic manga detector that works out-of-the-box with 
 | 94 | Go-Manga | go-manga.com | KR |
 | 95 | Pretty-Frank | pretty-frank.com | KR |
 | 96 | Up-Manga | up-manga.com | KR |
-
-</details>
 
 > **+ Generic Manga Detector** — A smart fallback that works on any Madara/MangaStream-engine site not explicitly listed.
 
