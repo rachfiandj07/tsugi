@@ -52,36 +52,46 @@ export const genericMangaDetector: PlatformDetector = {
         const segments = location.pathname.split('/').filter(Boolean);
         const lastSegment = segments[segments.length - 1];
         let progressMatch = location.pathname.match(/\/view\/[^\/]+\/([\d.]+)/i)
-            || location.pathname.match(/chapter-([\d.]+)/i)
+            || location.pathname.match(/chapter[-_]([\d.]+)/i)
             || location.href.match(/chapter\/([\d.]+)/i)
-            || (lastSegment && /^\d+$/.test(lastSegment) ? [null, lastSegment] : null);
+            || location.href.match(/ch[-_]?([\d.]+)/i)
+            || (lastSegment && /^\d+(?:\.\d+)?$/.test(lastSegment) ? [null, lastSegment] : null);
 
         // Fallback to DOM parsing with broader selectors
         let rawText = '';
         if (!progressMatch) {
-            const searchSelectors = [
-                '.current-chapter', '.chapter-info', 'button.active', '.navbar .active',
-                '.chapter-selector', '.dropdown-toggle', 'h1', 'title', 'h2'
-            ];
-            for (const sel of searchSelectors) {
-                const el = document.querySelector(sel);
-                const m = el?.textContent?.match(/Chapter\s*([\d.]+)/i);
-                if (m) {
-                    progressMatch = m;
-                    rawText = el!.textContent!;
-                    break;
+            // Document title is the most reliable non-URL indicator of the CURRENT viewing page
+            // We allow text before "Chapter" to catch formats like "One Piece - Chapter 123"
+            let titleMatch = document.title.match(/Chapter\s*([\d.]+)/i) || document.title.match(/Ch\.\s*([\d.]+)/i);
+            if (titleMatch) {
+                progressMatch = titleMatch;
+                rawText = document.title;
+            } else {
+                const searchSelectors = [
+                    'select option:checked', '.current-chapter', '#chapter-heading', '.chapter-title',
+                    'button.active', '.navbar .active', '.chapter-info',
+                    '.chapter-selector', '.dropdown-toggle', 'h1', 'h2'
+                ];
+                for (const sel of searchSelectors) {
+                    const el = document.querySelector(sel);
+                    const m = el?.textContent?.match(/Chapter\s*([\d.]+)/i) || el?.textContent?.match(/Ch\.\s*([\d.]+)/i);
+                    if (m) {
+                        progressMatch = m;
+                        rawText = el!.textContent!;
+                        break;
+                    }
                 }
             }
-        }
 
-        // If still nothing, scan any element that mentions "Chapter"
-        if (!progressMatch) {
-            const anyChapter = Array.from(document.querySelectorAll('button, span, a, p, div')).find(el => el.textContent?.match(/Chapter\s*\d+/i));
-            if (anyChapter) {
-                progressMatch = anyChapter.textContent!.match(/Chapter\s*([\d.]+)/i);
-                rawText = anyChapter.textContent!;
+            // If still nothing, scan any element that mentions "Chapter"
+            if (!progressMatch) {
+                const anyChapter = Array.from(document.querySelectorAll('button, span, a, p, div')).find(el => el.textContent?.match(/Chapter\s*\d+/i) || el.textContent?.match(/Ch\.\s*\d+/i));
+                if (anyChapter) {
+                    progressMatch = anyChapter.textContent!.match(/Chapter\s*([\d.]+)/i) || anyChapter.textContent!.match(/Ch\.\s*([\d.]+)/i);
+                    rawText = anyChapter.textContent!;
+                }
             }
-        }
+        } // <-- ADDED MISSING CLOSING BRACE
 
         let progress = 0;
         if (progressMatch) {
@@ -92,11 +102,13 @@ export const genericMangaDetector: PlatformDetector = {
 
         // 3. Clean title — prefer breadcrumb if it doesn't look like a chapter label
         let title = '';
-        if (breadcrumbTitle && !breadcrumbTitle.match(/Chapter\s*\d+/i)) {
+        if (breadcrumbTitle && !breadcrumbTitle.match(/^Chapter\s*\d+/i)) {
             title = breadcrumbTitle;
         } else {
-            title = document.querySelector('.series-title, .manga-title, .title, #series-title')?.textContent?.trim()
-                || metaTitle.split(' - ')[0].split(' | ')[0].trim();
+            const domTitle = document.querySelector('.series-title, .manga-title, .title, #series-title')?.textContent?.trim() || '';
+            const fallbackMeta = metaTitle.split(' - ')[0].split(' | ')[0].trim();
+            // If DOM title literally is just "Chapter X", explicitly throw it away
+            title = domTitle && !domTitle.match(/^Chapter\s*\d+/i) ? domTitle : fallbackMeta;
         }
 
         title = cleanTitle(title);
@@ -104,7 +116,11 @@ export const genericMangaDetector: PlatformDetector = {
         if (!isReadingManga() || progress <= 0 || !title) return null;
 
         const lowercaseTitle = title.toLowerCase();
-        const junk = ['chapter 1', 'home', 'manga', 'manhua', 'manhwa', 'weeb central', 'community manga'];
+        const junk = [
+            'chapter 1', 'home', 'manga', 'manhua', 'manhwa', 'weeb central', 'community manga',
+            'manga online', 'read manga', 'read manga online', 'free manga', 'read comics',
+            'komik', 'komik online', 'baca komik', 'baca manga', 'manga free', 'read free manga'
+        ];
         if (junk.includes(lowercaseTitle) || lowercaseTitle.length < 2) return null;
 
         console.log(`[Tsugi] Generic Manga Detection: Title="${title}", Progress=${progress}`);

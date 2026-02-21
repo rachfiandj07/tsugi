@@ -42,6 +42,8 @@ export const genericAnimeDetector: PlatformDetector = {
         /gogoanime\.\w+/, /9anime\.\w+/, /animesuge\.\w+/,
     ],
     detect() {
+        if (location.hostname.includes('netflix.com')) return null;
+
         const metaTitle = document.querySelector('meta[property="og:title"]')?.getAttribute('content') ?? '';
         const breadcrumbTitle = document.querySelector(
             '.breadcrumb a:nth-last-child(2), .panel-breadcrumb a:nth-last-child(2), nav a:nth-last-child(2)'

@@ -24,20 +24,32 @@ export const netflixDetector: PlatformDetector = {
     platform: 'netflix',
     matches: [/netflix\.com\/watch\//],
     detect() {
+        const domTitle = text('[data-uia="video-title"]');
+        const rawTitle = document.title.replace(' | Netflix', '').trim();
+        let title = domTitle || rawTitle;
+        let progress = 0;
+
         const playerControls = document.querySelector('.watch-video--player-view, .player-controls-wrapper');
         const ariaLabel = playerControls?.querySelector('[aria-label*=":"]')?.getAttribute('aria-label');
-        const rawTitle = document.title.replace(' | Netflix', '').trim();
-        let title = rawTitle;
-        let progress = 0;
-        const metadataText = ariaLabel ?? rawTitle;
-        const match = metadataText.match(/(.+?):\s*Season\s*\d+:\s*Episode\s*(\d+)/i)
-            || metadataText.match(/(.+?):\s*Episode\s*(\d+)/i);
+
+        const texts = [ariaLabel, domTitle, rawTitle].filter(Boolean) as string[];
+        let match: RegExpMatchArray | null = null;
+
+        for (const t of texts) {
+            match = t.match(/(.+?):\s*Season\s*\d+:\s*Episode\s*(\d+)/i)
+                || t.match(/(.+?):\s*Episode\s*(\d+)/i)
+                || t.match(/(.+?)\s+E(\d+)\s+(.+)/i)
+                || t.match(/(.+?)(?:E|Ep|Episode)(\d+)(.*)/i);
+
+            if (match) break;
+        }
+
         if (match) {
-            title = match[1].trim();
+            title = match[1].replace(/^Watch\s+/i, '').trim(); // Remove "Watch " if it leaked from rawTitle
             progress = parseNum(match[2]);
         }
         title = cleanTitle(title);
-        if (!isWatchingAnime() || !title) return null;
+        if (!isWatchingAnime() || !title || title.toLowerCase() === 'netflix') return null;
         return make('netflix', title, progress, 'anime');
     },
 };

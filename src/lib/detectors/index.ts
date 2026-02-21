@@ -106,7 +106,7 @@ import {
 import { genericAnimeDetector } from './anime/generic';
 
 // ─── Manga — Community ────────────────────────────────────────────────────────
-import { mangaBatDetector, mangakakalotDetector, tcbScansDetector } from './manga/community';
+import { mangaBatDetector, mangakakalotDetector, tcbScansDetector, weebCentralDetector } from './manga/community';
 
 // ─── Manga — Legal ────────────────────────────────────────────────────────────
 import { mangaDexDetector, webtoonDetector, mangaplusDetector } from './manga/legal';
@@ -215,6 +215,7 @@ export const ALL_DETECTORS: PlatformDetector[] = [
   mangaBatDetector,
   mangakakalotDetector,
   tcbScansDetector,
+  weebCentralDetector,
   // ── Legal manga ───────────────────────────────────────────────────────────
   mangaDexDetector,
   webtoonDetector,

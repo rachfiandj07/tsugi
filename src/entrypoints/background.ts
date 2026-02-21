@@ -6,21 +6,47 @@ import { exchangeShikimoriCode, getShikimoriUser, searchShikimori, updateShikimo
 import type { AidokuSource, AidokuSourceIndex, DetectedMedia, Message, MessageResponse, TrackedItem, TrackerEntry, TrackerType } from '@/lib/types';
 import { ensureValidToken } from '@/lib/utils/auth';
 import { getAllTrackedItems, getSettings, getTrackedItem, makePlatformKey, saveSettings, saveTrackedItem, storageSet } from '@/lib/utils/storage';
+import { defineBackground } from 'wxt/sandbox';
 
 // Store PKCE verifiers temporarily during auth flow
 const pkceVerifiers: Partial<Record<TrackerType, string>> = {};
 
 // Cache for items detected in the current session (not yet persistently saved if unlinked)
-let sessionDiscoveries: Record<string, TrackedItem> = {};
-let currentlyViewingKey: string | null = null;
+async function getSessionDiscoveries(): Promise<Record<string, TrackedItem>> {
+  const result = await chrome.storage.session.get('sessionDiscoveries');
+  return result.sessionDiscoveries || {};
+}
+
+async function saveSessionDiscoveries(obj: Record<string, TrackedItem>) {
+  await chrome.storage.session.set({ sessionDiscoveries: obj });
+}
+
+async function getActiveTabsMap(): Promise<Map<number, string>> {
+  const result = await chrome.storage.session.get('activeTabs');
+  if (result.activeTabs) {
+    return new Map(Object.entries(result.activeTabs).map(([k, v]) => [Number(k), v as string]));
+  }
+  return new Map();
+}
+
+async function saveActiveTabsMap(map: Map<number, string>) {
+  const obj = Object.fromEntries(map.entries());
+  await chrome.storage.session.set({ activeTabs: obj });
+}
 
 const AIDOKU_SOURCES_URL = 'https://aidoku-community.github.io/sources/index.min.json';
 const AIDOKU_CACHE_KEY = 'aidoku_sources_cache';
 const AIDOKU_REFRESH_INTERVAL = 24 * 60 * 60 * 1000; // 24 hours
 
 export default defineBackground(() => {
-  chrome.runtime.onMessage.addListener((message: Message, _sender, sendResponse) => {
-    handleMessage(message)
+  // Ensure session storage initializes with empty object if undefined
+  chrome.storage.session.get(['activeTabs', 'sessionDiscoveries']).then(res => {
+    if (!res.activeTabs) chrome.storage.session.set({ activeTabs: {} });
+    if (!res.sessionDiscoveries) chrome.storage.session.set({ sessionDiscoveries: {} });
+  });
+
+  chrome.runtime.onMessage.addListener((message: Message, sender, sendResponse) => {
+    handleMessage(message, sender)
       .then(sendResponse)
       .catch((err) => sendResponse({ success: false, error: err.message }));
     return true;
@@ -28,19 +54,43 @@ export default defineBackground(() => {
 
   // Prune session discoveries older than 1 day every hour to keep memory lean
   const SESSION_TTL = 24 * 60 * 60 * 1000; // 1 day
-  setInterval(() => {
+  setInterval(async () => {
     const now = Date.now();
-    for (const key in sessionDiscoveries) {
-      if (now - (sessionDiscoveries[key].createdAt ?? 0) > SESSION_TTL) {
-        delete sessionDiscoveries[key];
+    const discoveries = await getSessionDiscoveries();
+    let updated = false;
+    for (const key in discoveries) {
+      if (now - (discoveries[key].createdAt ?? 0) > SESSION_TTL) {
+        delete discoveries[key];
+        updated = true;
       }
     }
+    if (updated) await saveSessionDiscoveries(discoveries);
   }, 60 * 60 * 1000); // Run every hour
+
+  // Clean up active tabs when they are closed or navigate away
+  chrome.tabs.onRemoved.addListener(async (tabId) => {
+    const activeTabsMap = await getActiveTabsMap();
+    if (activeTabsMap.has(tabId)) {
+      activeTabsMap.delete(tabId);
+      await saveActiveTabsMap(activeTabsMap);
+    }
+  });
+
+  chrome.tabs.onUpdated.addListener(async (tabId, changeInfo) => {
+    if (changeInfo.status === 'loading' && changeInfo.url) {
+      // If the tab navigates to a new URL, assume they left the media page
+      const activeTabsMap = await getActiveTabsMap();
+      if (activeTabsMap.has(tabId)) {
+        activeTabsMap.delete(tabId);
+        await saveActiveTabsMap(activeTabsMap);
+      }
+    }
+  });
 });
 
 // ─── Message Router ───────────────────────────────────────────────────────────
 
-async function handleMessage(message: Message): Promise<MessageResponse> {
+async function handleMessage(message: Message, sender?: chrome.runtime.MessageSender): Promise<MessageResponse> {
   switch (message.type) {
 
     case 'GET_SETTINGS':
@@ -56,17 +106,19 @@ async function handleMessage(message: Message): Promise<MessageResponse> {
       const archived = await getArchivedItems();
       // Combine persistent active items with session discoveries that are NOT already in persistent
       const activeWithDiscoveries = [...active];
-      for (const key in sessionDiscoveries) {
+      const discoveries = await getSessionDiscoveries();
+      for (const key in discoveries) {
         if (!active.some(item => item.platformKey === key)) {
-          activeWithDiscoveries.push(sessionDiscoveries[key]);
+          activeWithDiscoveries.push(discoveries[key]);
         }
       }
+      const activeTabsMap = await getActiveTabsMap();
       return {
         success: true,
         data: {
           active: activeWithDiscoveries,
           archived,
-          currentlyViewingKey
+          currentlyViewingKeys: Array.from(new Set(activeTabsMap.values()))
         }
       };
     }
@@ -86,7 +138,7 @@ async function handleMessage(message: Message): Promise<MessageResponse> {
     case 'MEDIA_DETECTED': {
       const settings = await getSettings();
       if (settings.activeTrackers.length === 0) return { success: true, data: null }; // Silent ignore
-      return handleMediaDetected(message.payload);
+      return handleMediaDetected(message.payload, sender);
     }
 
     case 'LINK_ENTRY': {
@@ -115,6 +167,9 @@ async function handleMessage(message: Message): Promise<MessageResponse> {
 
     case 'CONFIRM_TRACKING':
       return handleConfirmTracking(message.payload);
+
+    case 'DISMISS_PENDING':
+      return handleDismissPending(message.payload);
 
     case 'GET_AIDOKU_SOURCES':
       return handleGetAidokuSources();
@@ -287,10 +342,15 @@ async function handleSearch({ tracker, query, mediaType }: {
 async function handleMediaDetected(payload: DetectedMedia, sender?: chrome.runtime.MessageSender): Promise<MessageResponse> {
   const { platform, title, progress, type } = payload;
   const platformKey = makePlatformKey(platform, title);
-  currentlyViewingKey = platformKey;
+
+  const tabId = sender?.tab?.id;
+  if (tabId) {
+    const activeMap = await getActiveTabsMap();
+    activeMap.set(tabId, platformKey);
+    await saveActiveTabsMap(activeMap);
+  }
 
   const [settings, existing] = await Promise.all([getSettings(), getTrackedItem(platformKey)]);
-  const tabId = sender?.tab?.id;
 
   if (existing) {
     // 1. Existing tracked item
@@ -341,6 +401,7 @@ async function handleMediaDetected(payload: DetectedMedia, sender?: chrome.runti
           ...duplicate,
           platformKey,
           platform,
+          platformTitle: title, // Keep exact title we are tracking
           updatedAt: Date.now(),
         };
         await saveTrackedItem(linkedItem);
@@ -362,7 +423,10 @@ async function handleMediaDetected(payload: DetectedMedia, sender?: chrome.runti
     }
 
     // 3. New discovery (Scenario 1)
-    if (!sessionDiscoveries[platformKey]) {
+    const discoveries = await getSessionDiscoveries();
+    let updatedDiscoveries = false;
+
+    if (!discoveries[platformKey]) {
       // ... existing discovery logic
       const discovery: TrackedItem = {
         platformKey, platform, platformTitle: title, type,
@@ -370,14 +434,15 @@ async function handleMediaDetected(payload: DetectedMedia, sender?: chrome.runti
         status: type === 'anime' ? 'watching' : 'reading',
         migrationStatus: 'active', createdAt: Date.now(), updatedAt: Date.now(),
       };
-      sessionDiscoveries[platformKey] = discovery;
+      discoveries[platformKey] = discovery;
+      updatedDiscoveries = true;
 
       if (settings.activeTrackers.length > 0 && progress >= 1 && tabId) {
         showModal(tabId, 'link', { platformKey, title, progress });
       }
     } else {
       // Already discovered but not yet linked — update progress if user has read further
-      const existing = sessionDiscoveries[platformKey];
+      const existing = discoveries[platformKey];
       if (progress > existing.lastProgress) {
         existing.lastProgress = progress;
         existing.updatedAt = Date.now();
@@ -386,8 +451,11 @@ async function handleMediaDetected(payload: DetectedMedia, sender?: chrome.runti
         if (!existing.pendingProgress.includes(progress)) {
           existing.pendingProgress.push(progress);
         }
+        updatedDiscoveries = true;
       }
     }
+
+    if (updatedDiscoveries) await saveSessionDiscoveries(discoveries);
   }
 
   return { success: true, data: null };
@@ -400,9 +468,11 @@ async function handleConfirmTracking({ platformKey, confirmed, always }: any): P
   }
 
   let item = await getTrackedItem(platformKey);
-  if (!item && sessionDiscoveries[platformKey]) {
-    item = sessionDiscoveries[platformKey];
-    delete sessionDiscoveries[platformKey];
+  const discoveries = await getSessionDiscoveries();
+  if (!item && discoveries[platformKey]) {
+    item = discoveries[platformKey];
+    delete discoveries[platformKey];
+    await saveSessionDiscoveries(discoveries);
   }
 
   if (item) {
@@ -423,16 +493,41 @@ function showModal(tabId: number, modalType: 'link' | 'migration' | 'jump' | 'fa
   chrome.tabs.sendMessage(tabId, { type: 'SHOW_MODAL', payload: { modalType, data } }).catch(() => { });
 }
 
+async function handleDismissPending({ platformKeys }: { platformKeys: string[] }): Promise<MessageResponse> {
+  const all = await getAllTrackedItems();
+  const discoveries = await getSessionDiscoveries();
+  let updatedPersistent = false;
+  let updatedDiscoveries = false;
+
+  for (const key of platformKeys) {
+    if (all[key]) {
+      all[key].pendingProgress = [];
+      updatedPersistent = true;
+    }
+    if (discoveries[key]) {
+      discoveries[key].pendingProgress = [];
+      updatedDiscoveries = true;
+    }
+  }
+
+  if (updatedPersistent) await storageSet('tsugi:tracked', all);
+  if (updatedDiscoveries) await saveSessionDiscoveries(discoveries);
+  return { success: true, data: null };
+}
+
 // ─── Link / Unlink ────────────────────────────────────────────────────────────
 
-async function handleLinkEntry({ platformKey, tracker, entryId, status }: any): Promise<MessageResponse> {
+async function handleLinkEntry(payload: any): Promise<MessageResponse> {
+  const { platformKey, tracker, entryId, status, totalChapters, totalEpisodes } = payload;
   // 1. Check persistent storage
   let item = await getTrackedItem(platformKey);
 
   // 2. Check session discoveries (items detected but not yet linked)
-  if (!item && sessionDiscoveries[platformKey]) {
-    item = sessionDiscoveries[platformKey];
-    delete sessionDiscoveries[platformKey];
+  const discoveries = await getSessionDiscoveries();
+  if (!item && discoveries[platformKey]) {
+    item = discoveries[platformKey];
+    delete discoveries[platformKey];
+    await saveSessionDiscoveries(discoveries);
   }
 
   // 3. If still not found, handle manual/generic keys from search
@@ -462,6 +557,10 @@ async function handleLinkEntry({ platformKey, tracker, entryId, status }: any): 
 
   item.trackerIds = { ...item.trackerIds, [tracker]: entryId };
   if (status) item.status = status;
+  // Bug 5: Auto-complete support - store the max bounds
+  const total = payload.totalChapters ?? payload.totalEpisodes;
+  if (total !== undefined) item.total = total;
+
   item.updatedAt = Date.now();
 
   // Use the highest progress seen (pending or lastProgress) for the initial sync
@@ -491,7 +590,14 @@ async function handleUnlinkEntry({ platformKey, tracker }: { platformKey: string
 // ─── Sync ─────────────────────────────────────────────────────────────────────
 
 async function handleSyncProgress(platformKey: string): Promise<MessageResponse> {
-  const item = await getTrackedItem(platformKey);
+  let item = await getTrackedItem(platformKey);
+  const discoveries = await getSessionDiscoveries();
+  if (!item && discoveries[platformKey]) {
+    // Escalate the session discovery into a persistent tracked item
+    item = discoveries[platformKey];
+    delete discoveries[platformKey];
+    await saveSessionDiscoveries(discoveries);
+  }
   if (!item) return { success: false, error: 'Not tracking this entry' };
 
   const pending = item.pendingProgress ?? [];
@@ -515,6 +621,12 @@ async function syncToTrackers(platformKey: string, progress: number): Promise<vo
   if (!item) return;
 
   const isAnime = item.type === 'anime';
+
+  // Bug 5: Check auto-complete
+  if (item.total && progress >= item.total && item.status !== 'completed') {
+    item.status = 'completed';
+  }
+
   const status = item.status;
 
   const syncs = settings.activeTrackers.map(async (tracker) => {
@@ -616,6 +728,7 @@ async function syncAllHistory(): Promise<void> {
             trackerIds: { [tracker]: entry.id },
             lastProgress: entry.progress,
             status: entry.status,
+            total: entry.totalChapters ?? entry.totalEpisodes,
             migrationStatus: 'active',
             createdAt: Date.now(),
             updatedAt: Date.now(),

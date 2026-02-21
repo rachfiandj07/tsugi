@@ -1,5 +1,6 @@
 import { detectCurrentPage } from '@/lib/detectors';
 import type { Message, DetectedMedia } from '@/lib/types';
+import { defineContentScript } from 'wxt/sandbox';
 
 export default defineContentScript({
   matches: [
@@ -158,14 +159,17 @@ export default defineContentScript({
     });
 
     async function tryDetect() {
-      const resp = await chrome.runtime.sendMessage({ type: 'GET_SETTINGS' });
-      if (!resp?.success || (resp.data.activeTrackers?.length ?? 0) === 0) {
+      // 1. Synchronously detect if we are on a media page FIRST
+      // This is blazingly fast and avoids IPC overhead for non-media pages
+      const detected = detectCurrentPage();
+      if (!detected) {
         overlays.setFab(null, () => { });
         return;
       }
 
-      const detected = detectCurrentPage();
-      if (!detected) {
+      // 2. ONLY if media is detected do we query the background script for settings
+      const resp = await chrome.runtime.sendMessage({ type: 'GET_SETTINGS' });
+      if (!resp?.success || (resp.data.activeTrackers?.length ?? 0) === 0) {
         overlays.setFab(null, () => { });
         return;
       }
@@ -192,7 +196,8 @@ export default defineContentScript({
 
     function scheduledDetect() {
       if (debounceTimer) clearTimeout(debounceTimer);
-      debounceTimer = setTimeout(tryDetect, 800);
+      // Reduce debounce timer from 800ms to 250ms for near-instant detection
+      debounceTimer = setTimeout(tryDetect, 250);
     }
 
     tryDetect();

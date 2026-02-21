@@ -165,6 +165,7 @@ export interface TrackerEntry {
   totalEpisodes?: number;
   tracker: TrackerType;
   publishingStatus?: string;
+  total?: number;
 }
 
 // ─── Detected Media ───────────────────────────────────────────────────────────
@@ -205,6 +206,7 @@ export interface TrackedItem {
   migratedFrom?: MigrationRecord;
   migratedTo?: MigrationRecord;
   publishingStatus?: string;
+  total?: number;
   pendingProgress?: number[]; // Chapters read but not synced
   autoTrack?: boolean; // If true, ignore confirmation for this item
   createdAt: number;
@@ -265,7 +267,8 @@ export type Message =
   // Content Script UI Messages
   | { type: 'SHOW_TOAST'; payload: { title: string; subtitle: string; duration?: number; type?: 'success' | 'warning' | 'error' | 'info' } }
   | { type: 'SHOW_MODAL'; payload: { modalType: 'link' | 'migration' | 'jump' | 'fallback'; data: any } }
-  | { type: 'CONFIRM_TRACKING'; payload: { platformKey: string; confirmed: boolean; always?: boolean } };
+  | { type: 'CONFIRM_TRACKING'; payload: { platformKey: string; confirmed: boolean; always?: boolean } }
+  | { type: 'DISMISS_PENDING'; payload: { platformKeys: string[] } };
 
 export interface MigratePlatformPayload {
   fromPlatformKey: string;
